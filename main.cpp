@@ -50,6 +50,8 @@ int main(int argc, char **argv) {
 
         int sample_duration_milliseconds = INFINITY;
 
+        HANDLE process_handle;
+
         for (int i = 0; i < 10; i++) {
             // Wait for a debugging event to occur.
 
@@ -99,7 +101,7 @@ int main(int argc, char **argv) {
 
                 break;
 
-            case CREATE_THREAD_DEBUG_EVENT:
+            case CREATE_THREAD_DEBUG_EVENT: {
                 // As needed, examine or change the thread's registers
                 // with the GetThreadContext and SetThreadContext functions;
                 // and suspend and resume thread execution with the
@@ -107,21 +109,7 @@ int main(int argc, char **argv) {
 
                 std::cout << "created thread" << std::endl;
 
-                break;
-
-            case CREATE_PROCESS_DEBUG_EVENT: {
-                // As needed, examine or change the registers of the
-                // process's initial thread with the GetThreadContext and
-                // SetThreadContext functions; read from and write to the
-                // process's virtual memory with the ReadProcessMemory and
-                // WriteProcessMemory functions; and suspend and resume
-                // thread execution with the SuspendThread and ResumeThread
-                // functions. Be sure to close the handle to the process image
-                // file with CloseHandle.
-
-                std::cout << "created process" << std::endl;
-
-                auto &info = debug_event.u.CreateProcessInfo;
+                auto &info = debug_event.u.CreateThread;
 
                 CONTEXT context = { .ContextFlags = CONTEXT_FULL, };
 
@@ -140,7 +128,7 @@ int main(int argc, char **argv) {
                 for (int i = 0; i < 20; i++) {
 
                     if (!StackWalkEx(
-                        IMAGE_FILE_MACHINE_AMD64, info.hProcess, info.hThread,
+                        IMAGE_FILE_MACHINE_AMD64, process_handle, info.hThread,
                         &stack_frame, &context, nullptr,
                         SymFunctionTableAccess64,
                         SymGetModuleBase64, nullptr,
@@ -153,18 +141,30 @@ int main(int argc, char **argv) {
 
                     std::cout << std::hex << program_counter << ", ";
 
+                    if (stack_frame.AddrReturn.Offset == 0) {
+                        break;
+                    }
                 }
 
                 std::cout << std::endl;
 
-                /*
-                IMAGEHLP_SYMBOL64 symbol;
+                break;
+            }
+            case CREATE_PROCESS_DEBUG_EVENT: {
+                // As needed, examine or change the registers of the
+                // process's initial thread with the GetThreadContext and
+                // SetThreadContext functions; read from and write to the
+                // process's virtual memory with the ReadProcessMemory and
+                // WriteProcessMemory functions; and suspend and resume
+                // thread execution with the SuspendThread and ResumeThread
+                // functions. Be sure to close the handle to the process image
+                // file with CloseHandle.
 
-                if (program_counter != 0) {
-                    check(SymGetSymFromAddr64(
-                        info.hProcess, program_counter, nullptr, &symbol
-                    ));
-                }*/
+                std::cout << "created process" << std::endl;
+
+                auto &info = debug_event.u.CreateProcessInfo;
+
+                process_handle = info.hProcess;
 
                 break;
             }
