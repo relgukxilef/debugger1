@@ -309,14 +309,23 @@ int main(int argc, char **argv) {
                 threads_frame_size.data(), thread_size
             );
 
+            char line[121] = {};
+            int j = 0;
+
             for (auto frame_size : threads_frame_size) {
                 frames_program_counter.resize(frame_size);
                 s.samples_threads_frames_program_counter.pop(
                     frames_program_counter.data(), frame_size
                 );
-                std::cout << frame_size << ' ';
+                int i;
+                for (i = 0; i < frame_size && i < 10 && j < 120; i++, j++) {
+                    line[j] = '#';
+                }
+                for (; i < 10 && j < 120; i++, j++) {
+                    line[j] = ' ';
+                }
             }
-            std::cout << std::endl;
+            std::cout << line << std::endl;
         }
 
         int width, height;
