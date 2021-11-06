@@ -1,5 +1,6 @@
 #include <iostream>
 #include <cassert>
+#include <unordered_map>
 
 #define NOMINMAX
 #include <Windows.h>
@@ -24,18 +25,55 @@ struct unique_debug_process {
 };
 
 struct unique_debug_event {
-    unique_debug_event(long sample_duration_milliseconds) {
-        check(WaitForDebugEvent(&debug_event, sample_duration_milliseconds));
+    unique_debug_event(unsigned long sample_duration_milliseconds) {
+        timed_out =
+            !WaitForDebugEvent(&debug_event, sample_duration_milliseconds);
     }
     ~unique_debug_event() {
         // Resume executing the thread that reported the debugging event.
-        ContinueDebugEvent(
-            debug_event.dwProcessId, debug_event.dwThreadId, continue_status
-        );
+        if (!timed_out) {
+            ContinueDebugEvent(
+                debug_event.dwProcessId, debug_event.dwThreadId, continue_status
+            );
+        }
     }
+    bool timed_out;
     DEBUG_EVENT debug_event;
     DWORD continue_status = DBG_CONTINUE; // exception continuation
 };
+
+void write_stack_trace(HANDLE process, HANDLE thread) {
+
+    // ContextFlags specifies what parts to include
+    CONTEXT context = { .ContextFlags = CONTEXT_CONTROL, };
+
+    check(GetThreadContext(thread, &context));
+
+    STACKFRAME_EX stack_frame = {};
+
+    for (int i = 0; i < 20; i++) {
+
+        if (!StackWalkEx(
+            IMAGE_FILE_MACHINE_AMD64, process, thread,
+            &stack_frame, &context, nullptr,
+            SymFunctionTableAccess64,
+            SymGetModuleBase64, nullptr,
+            SYM_STKWALK_DEFAULT
+        )) {
+            break;
+        }
+
+        auto program_counter = stack_frame.AddrPC.Offset;
+
+        std::cout << std::hex << program_counter << ", ";
+
+        if (stack_frame.AddrReturn.Offset == 0) {
+            break;
+        }
+    }
+
+    std::cout << std::endl;
+}
 
 int main(int argc, char **argv) {
     if (argc < 2) {
@@ -48,14 +86,21 @@ int main(int argc, char **argv) {
 
         unique_debug_process process(process_id);
 
-        int sample_duration_milliseconds = INFINITY;
+        auto sample_duration_milliseconds = 100;
 
         HANDLE process_handle;
 
-        for (int i = 0; i < 10; i++) {
+        std::unordered_map<DWORD, HANDLE> threads;
+
+        while (true) {
             // Wait for a debugging event to occur.
 
             unique_debug_event event(sample_duration_milliseconds);
+
+            if (event.timed_out) {
+                DebugBreakProcess(process_handle);
+                continue;
+            }
 
             DEBUG_EVENT &debug_event = event.debug_event;
 
@@ -70,28 +115,21 @@ int main(int argc, char **argv) {
 
                 switch(debug_event.u.Exception.ExceptionRecord.ExceptionCode) {
                 case EXCEPTION_ACCESS_VIOLATION:
-                    // First chance: Pass this on to the system.
-                    // Last chance: Display an appropriate error.
                     break;
 
                 case EXCEPTION_BREAKPOINT:
-                    // First chance: Display the current
-                    // instruction and register values.
+                    for (auto &thread : threads) {
+                        write_stack_trace(process_handle, thread.second);
+                    }
                     break;
 
                 case EXCEPTION_DATATYPE_MISALIGNMENT:
-                    // First chance: Pass this on to the system.
-                    // Last chance: Display an appropriate error.
                     break;
 
                 case EXCEPTION_SINGLE_STEP:
-                    // First chance: Update the display of the
-                    // current instruction and register values.
                     break;
 
                 case DBG_CONTROL_C:
-                    // First chance: Pass this on to the system.
-                    // Last chance: Display an appropriate error.
                     break;
 
                 default:
@@ -109,37 +147,9 @@ int main(int argc, char **argv) {
 
                 std::cout << "created thread" << std::endl;
 
-                auto &info = debug_event.u.CreateThread;
-
-                // ContextFlags specifies what parts to include
-                CONTEXT context = { .ContextFlags = CONTEXT_CONTROL, };
-
-                check(GetThreadContext(info.hThread, &context));
-
-                STACKFRAME_EX stack_frame = {};
-
-                for (int i = 0; i < 20; i++) {
-
-                    if (!StackWalkEx(
-                        IMAGE_FILE_MACHINE_AMD64, process_handle, info.hThread,
-                        &stack_frame, &context, nullptr,
-                        SymFunctionTableAccess64,
-                        SymGetModuleBase64, nullptr,
-                        SYM_STKWALK_DEFAULT
-                    )) {
-                        break;
-                    }
-
-                    auto program_counter = stack_frame.AddrPC.Offset;
-
-                    std::cout << std::hex << program_counter << ", ";
-
-                    if (stack_frame.AddrReturn.Offset == 0) {
-                        break;
-                    }
-                }
-
-                std::cout << std::endl;
+                threads.insert({
+                    debug_event.dwThreadId, debug_event.u.CreateThread.hThread
+                });
 
                 break;
             }
@@ -159,11 +169,13 @@ int main(int argc, char **argv) {
 
                 process_handle = info.hProcess;
 
+                // main thread doesn't trigger CREATE_THREAD_DEBUG_EVENT
+                threads.insert({debug_event.dwThreadId, info.hThread});
+
                 break;
             }
             case EXIT_THREAD_DEBUG_EVENT:
-                // Display the thread's exit code.
-
+                threads.erase(debug_event.dwThreadId);
                 break;
 
             case EXIT_PROCESS_DEBUG_EVENT:
