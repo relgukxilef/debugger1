@@ -111,19 +111,12 @@ int main(int argc, char **argv) {
 
                 auto &info = debug_event.u.CreateThread;
 
-                CONTEXT context = { .ContextFlags = CONTEXT_FULL, };
+                // ContextFlags specifies what parts to include
+                CONTEXT context = { .ContextFlags = CONTEXT_CONTROL, };
 
                 check(GetThreadContext(info.hThread, &context));
 
-                STACKFRAME_EX stack_frame = {
-                    .AddrPC = { .Offset = context.Rip, .Mode = AddrModeFlat, },
-                    .AddrFrame = {
-                        .Offset = context.Rsp, .Mode = AddrModeFlat,
-                    },
-                    .AddrStack = {
-                        .Offset = context.Rsp, .Mode = AddrModeFlat,
-                    },
-                };
+                STACKFRAME_EX stack_frame = {};
 
                 for (int i = 0; i < 20; i++) {
 
